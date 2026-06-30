@@ -1,0 +1,50 @@
+{
+    "model": {
+        "xml": "best.xml",
+        "bin": "best.bin"
+    },
+    "nn_config": {
+        "output_format": "detection",
+        "NN_family": "YOLO",
+        "input_size": "416x416",
+        "NN_specific_metadata": {
+            "classes": 26,
+            "coordinates": 4,
+            "anchors": [],
+            "anchor_masks": {},
+            "iou_threshold": 0.5,
+            "confidence_threshold": 0.5
+        }
+    },
+    "mappings": {
+        "labels": [
+            "barrier_ahead",
+            "beginning_of_motorway",
+            "car_prohibited",
+            "compulsory_ahead",
+            "crossroads",
+            "cycle_lane",
+            "end_of_motorway",
+            "give_way",
+            "major_road_ahead",
+            "mandatory_left",
+            "mandatory_right",
+            "no_entry",
+            "no_left_turn",
+            "no_parking",
+            "no_waiting",
+            "one_way",
+            "parking",
+            "priority_road",
+            "roundabout",
+            "stop",
+            "straight_or_left",
+            "t_intersection",
+            "traffic_signal",
+            "u_turn",
+            "y_intersection",
+            "zebra_crossing"
+        ]
+    },
+    "version": 1
+}
