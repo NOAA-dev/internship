@@ -1,0 +1,115 @@
+<launch>
+
+    <!-- Mode selection -->
+    <arg name="mode" default="track_map"/> <!-- track_map or slam -->
+
+    <!-- Controller selection -->
+    <arg name="controller" default="mpc"/> <!-- mpc or stanley -->
+
+    <!-- Run SLAM only when mode=slam -->
+    <include if="$(eval '\'$(var mode)\' == \'slam\'')"
+             file="$(find-pkg-share program_bringup)/launch/slam.launch.xml" />
+
+    <arg name="use_sim_time" default="false"/>
+    <arg name="map_name" default="iitb_maps"/>
+
+    <let name="rviz_config" value="$(find-pkg-share program_bringup)/config/iitb_view.rviz"/>
+    <let name="map_path"
+         value="$(find-pkg-share robot_maps)/maps/$(var map_name)/map.yaml"/>
+
+    <node pkg="global_planer"
+          exec="map_gen_"
+          name="map_gen_"
+          output="screen"/>
+
+    <!-- TF publisher -->
+    <node unless="$(eval '\'$(var mode)\' == \'slam\'')"
+          pkg="tf2_ros"
+          exec="static_transform_publisher"
+          name="map_to_odom_broadcaster_3"
+          output="screen"
+          args="0 0 0 0 0 0 map odom"/>
+
+    <node pkg="tf2_ros"
+          exec="static_transform_publisher"
+          name="map_to_odom_broadcaster_2"
+          output="screen"
+          args="0.0 0 0.2 0 0 0 base_footprint_imu imu_link"/>
+
+    <!-- Map server only when mode=track_map -->
+    <node unless="$(eval '\'$(var mode)\' == \'slam\'')"
+          pkg="nav2_map_server"
+          exec="map_server"
+          name="map_server"
+          output="screen">
+        <param name="yaml_filename" value="$(var map_path)"/>
+        <param name="frame_id" value="map"/>
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </node>
+
+    <!-- Lifecycle manager only when mode=track_map -->
+    <node unless="$(eval '\'$(var mode)\' == \'slam\'')"
+          pkg="nav2_lifecycle_manager"
+          exec="lifecycle_manager"
+          name="lifecycle_manager_localization"
+          output="screen">
+        <param name="node_names" value="['map_server']"/>
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
+        <param name="autostart" value="true"/>
+    </node>
+
+
+    <!-- Robot TF publisher -->
+    <node pkg="global_planer"
+          exec="spawn_sim_vehicle"
+          name="spawn_sim_vehicle"
+          output="screen"/>
+
+    <!-- MPC Controller -->
+    <node if="$(eval '\'$(var controller)\' == \'mpc\'')"
+          pkg="local_planner_mpc"
+          exec="mpc_"
+          name="mpc_controller"
+          output="screen"/>
+
+    <!-- Stanley Controller -->
+    <node if="$(eval '\'$(var controller)\' == \'stanley\'')"
+          pkg="local_planner_stanley"
+          exec="Stanley_real"
+          name="stanley_controller"
+          output="screen"/>
+
+      <node if="$(eval '\'$(var controller)\' == \'stanley\'')"
+          pkg="local_planner_stanley"
+          exec="Stanley"
+          name="stanley_controlle_sim"
+          output="screen"/>
+
+    <!-- Hybrid A* Planner -->
+    <node pkg="global_planer"
+          exec="hybrid_a_star_"
+          name="hybrid_astar_planner"
+          output="screen"/>
+
+    <node pkg="robot_localization"
+          exec="ekf_node"
+          name="ekf_filter_node"
+          output="screen">
+        <param from="$(find-pkg-share program_bringup)/config/efk_iitb.yaml"/>
+    </node>
+
+    <node pkg="global_planer"
+          exec="spwan_real_vehicle"
+          name="spwan_real_vehicle"
+          output="screen"/>
+          
+    <node pkg="bno_test_pkg"
+    	  exec="imu_node"
+    	  output="screen"/>
+    	  
+ 	<!-- RViz -->
+    <node pkg="rviz2" exec="rviz2" args="-d $(var rviz_config)"/>
+    
+    <node pkg="global_planer" exec="data_collect" name="data_recorder" args="-d $(var rviz_config)"/>
+
+</launch>
