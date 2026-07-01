@@ -9,8 +9,8 @@
 A ROS 2 full-stack autonomous navigation system for a 1/14th-scale Ackermann-steered
 Connected Autonomous Vehicle (CAV): occupancy-grid map generation, a kinematically-feasible
 Hybrid A* global planner, a Linear Time-Varying MPC (with a Stanley + PID baseline),
-multi-sensor EKF localization (VESC odometry, BNO055 IMU, AprilTag IPS), a VESC hardware
-interface, and a camera-based traffic-sign response pipeline.
+multi-sensor EKF localization (VESC odometry, BNO055 IMU, AprilTag IPS), and a VESC hardware
+interface.
 
 > Developed at the **AMS Laboratory, IIT Bombay**, during a two-month summer internship.
 
@@ -48,8 +48,6 @@ limitations (corner-cutting, no wall awareness) were exposed on the physical tra
   with slew-rate limiting and an asymmetric steering-linkage calibration table.
 - **Offline map pre-processor** converting a track-layout image into a dilated occupancy grid
   (for planning) and an un-dilated distance-transform grid (for MPC clearance costs).
-- **Camera-based traffic-sign inference node** (YOLO-style ONNX model via OpenVINO/PyTorch)
-  publishing sign classifications consumed by the MPC's velocity scheduler.
 - **Shadow simulator** (`sim_vehicle_tf_generator`) that mirrors commanded control inputs
   through an ideal bicycle model, for isolating controller bugs from localization/hardware
   noise.
@@ -66,7 +64,6 @@ limitations (corner-cutting, no wall awareness) were exposed on the physical tra
 | Motor controller | VESC Mini V6 ("Skyflip"), driving a BLDC motor † |
 | IMU | Bosch BNO055 (I²C), auto-fused orientation, relative-gyro mode `0x08` |
 | Positioning | AprilTag fiducial-based Indoor Positioning System (camera + `apriltag` detector) |
-| Camera | OAK-D (traffic-sign detector node: `bno_test_pkg` — YOLOv8-style ONNX model) † |
 | LiDAR | YDLIDAR (driver package `ydlidar_ros2_driver` present in repo; not referenced in the launch file — see *Information Missing*) |
 | Chassis | Ackermann-steered 1/14th-scale CAV, wheelbase 0.21 m † |
 | Steering range | Asymmetric: approx. −10° (left lock) to +18.75°/+22° (right lock) † |
@@ -86,7 +83,6 @@ limitations (corner-cutting, no wall awareness) were exposed on the physical tra
 | Local control | Custom LTV-MPC (Python) solved with **OSQP**; Stanley controller in **C++** |
 | Localization | `robot_localization` EKF node (`ekf_node`) |
 | Hardware I/O | `vesc_driver`, `vesc_ackermann`, `vesc_msgs` (VESC ROS 2 stack, vendored from [f1tenth/vesc](https://github.com/f1tenth/vesc)) |
-| Perception | OpenCV, PyTorch/TorchVision, ONNX Runtime / OpenVINO (traffic-sign inference) |
 | LiDAR driver | `ydlidar_ros2_driver` |
 | Visualization | RViz2, custom `visualization_msgs/Marker` publishers |
 | SLAM (optional mode) | `slam_toolbox` (`slam.launch.xml`, `slam_toolbox.yaml`) |
@@ -114,12 +110,10 @@ limitations (corner-cutting, no wall awareness) were exposed on the physical tra
 │   │       ├── stanley_for_real_bot.cpp
 │   │       └── stanley_for_sim.cpp
 │   │
-│   ├── bno_test_pkg/                 # IMU driver, encoder evaluation, traffic-sign inference
+│   ├── bno_test_pkg/                 # IMU driver and wheel-encoder evaluation
 │   │   └── bno_test_pkg/
 │   │       ├── bno05.py                      # BNO055 IMU ROS 2 node (imu_node)
-│   │       ├── as5600.py                     # AS5600 Hall-effect encoder evaluation (not deployed)
-│   │       
-│   │       
+│   │       └── as5966.py                     # AS5600 Hall-effect encoder evaluation (not deployed)
 │   │
 │   ├── custom_interfaces/            # Custom ROS 2 msg/srv definitions
 │   │   ├── msg/Path.msg                      # float64[] x, y, theta
@@ -138,16 +132,16 @@ limitations (corner-cutting, no wall awareness) were exposed on the physical tra
 │   │
 │   └── ydlidar_ros2_driver/          # Vendored YDLIDAR ROS 2 driver
 │
-└── docs/images/                      # Diagrams extracted for this README
+└── docs/images/                      # Diagrams referenced in this README
 ```
 
 ---
 
 ## System Architecture
 
-The stack is organized into five cooperating subsystems: **map processing/perception**,
-**global path planning**, **local motion control**, **state estimation/sensor fusion**, and
-**hardware interfacing**. All coordination happens over standard ROS 2 topics/services.
+The stack is organized into four cooperating subsystems: **map processing**,
+**global path planning**, **local motion control**, and **state estimation/sensor fusion &
+hardware interfacing**. All coordination happens over standard ROS 2 topics/services.
 
 ![Workflow Diagram](docs/images/workflow_diagram.png)
 *System workflow: an offline map pre-processor feeds a dilated occupancy grid to Hybrid A*
@@ -223,14 +217,8 @@ Goal (service call to /goal)
 | `map_gen_` | `map_gen_` | `global_planer` | Track image → occupancy grid (offline) |
 | `data_recorder` | `data_collect` | `global_planer` | Time-synchronized CSV data logging |
 | `imu_node` (unnamed at launch) | `imu_node` | `bno_test_pkg` | BNO055 IMU driver |
-| *(not in main launch file)* | `inference_node` | `bno_test_pkg` | Traffic-sign detector (OAK-D + ONNX) |
 | `map_server` | — | `nav2_map_server` | Serves the static occupancy grid |
 | `lifecycle_manager_localization` | — | `nav2_lifecycle_manager` | Lifecycle-manages `map_server` |
-
-> **Information Missing:** the traffic-sign `inference_node` (which publishes to
-> `/sign_action_node/command`, consumed by the MPC) is defined in `bno_test_pkg/setup.py` but
-> is **not** instantiated in `program_bringup/launch/iitb_bot.xml`. It must be launched
-> separately, or the launch file is incomplete relative to what the MPC subscribes to.
 
 ### Key Topics
 
@@ -245,7 +233,6 @@ Goal (service call to /goal)
 | `/test_twist` | `geometry_msgs/Twist` | `mpc_controller`, Stanley controller | `spwan_real_vehicle` |
 | `/commands/motor/speed`, `/commands/servo/position`, `/commands/motor/duty_cycle` | `std_msgs/Float64` | `spwan_real_vehicle` | VESC driver |
 | `/sensors/core` | `vesc_msgs/VescStateStamped` | VESC driver | `spwan_real_vehicle` |
-| `/sign_action_node/command` | `std_msgs/String` | `inference_node` (not launched by default — see note above) | `mpc_controller` |
 | `/robot_actual_path`, `/mpc_predicted_path`, `/mpc_reference_path`, `/mpc_nominal_path` | `nav_msgs/Path` | `mpc_controller` | RViz2 |
 | `/mpc_nearby_obstacles`, `/car_bounds_marker`, `/car_sim_bounds_marker` | `visualization_msgs/Marker` | `mpc_controller`, hardware relay, sim TF | RViz2 |
 | `/path_vis` | `nav_msgs/Path` | `spawn_sim_vehicle` | `data_recorder` |
@@ -336,8 +323,6 @@ Implemented in `mpc_node.py`. A linear time-varying model predictive controller 
 - **Replanning:** `check_position_jump()` detects large discontinuities in the EKF pose
   (typically from an AprilTag re-lock after dropout) and triggers a new Hybrid A* request via
   the `/goal` service.
-- **Traffic-sign response:** subscribes to `/sign_action_node/command` and applies velocity
-  overrides for `STOP`, `SLOW_DOWN`, and `PARK` classifications.
 
 ### Comparison
 
@@ -349,7 +334,6 @@ Implemented in `mpc_node.py`. A linear time-varying model predictive controller 
 | Corner cutting | Frequent on tight curves | Reduced by predictive horizon |
 | Computational cost | Very low (closed-form) | Moderate (condensed QP via OSQP) |
 | Constraint handling | Post-hoc clamping | Hard constraints in the optimizer |
-| Sign/perception commands | External override only | Native subscription in the controller |
 | Replanning on pose jump | Not handled | Triggers a new Hybrid A* request |
 
 ---
@@ -421,14 +405,12 @@ sudo apt install -y \
   ros-$ROS_DISTRO-robot-localization \
   ros-$ROS_DISTRO-slam-toolbox \
   ros-$ROS_DISTRO-tf-transformations \
-  ros-$ROS_DISTRO-joy \
-  ros-$ROS_DISTRO-joy-teleop \
   ros-$ROS_DISTRO-xacro \
   ros-$ROS_DISTRO-rviz2 \
   python3-serial
 
-# Python dependencies used by the MPC / planning / perception nodes
-pip install --break-system-packages numpy scipy osqp opencv-python torch torchvision onnxruntime
+# Python dependencies used by the MPC / planning nodes
+pip install --break-system-packages numpy scipy osqp
 ```
 
 Clone into a ROS 2 workspace:
@@ -471,31 +453,24 @@ ros2 service call /goal custom_interfaces/srv/HybridAStar "{goal: [x, y, theta]}
 RViz2 launches automatically using `program_bringup/config/iitb_view.rviz`, showing the map,
 planned path, MPC predicted/reference/nominal paths, and vehicle footprint markers.
 
-The traffic-sign inference node is **not** included in the default launch file and must be run
-separately if sign-response behavior is required:
-
-```bash
-ros2 run bno_test_pkg inference_node
-```
-
 **Expected behavior:** the vehicle should plan a Hybrid A*-feasible path to the requested
-goal, track it with the active controller, and slow/stop for detected obstacles (EDT fallback,
-MPC only) or classified traffic signs (if `inference_node` is running).
+goal and track it with the active controller, slowing or executing an escape maneuver if the
+MPC's EDT-based clearance check detects the predicted trajectory approaching a wall.
 
 ---
 
 ## Experimental Results
 
-Four physical validation runs (from the internship report) compared EKF localization
+Three physical validation runs (from the internship report) compared EKF localization
 configurations while holding the MPC controller and planner fixed.
 
-| Metric | IPS + IMU (production) | IPS Only | IMU Only | Sign-Detection Run |
-|---|---|---|---|---|
-| Run duration (s) | 20.3 | 39.3 | 25.7 | 47.6 |
-| Cross-track error, mean (cm) | 4.46 | 8.65 | 3.84 | 6.84 |
-| Cross-track error, p95 (cm) | 7.59 | 11.05 | 11.55 | 17.67 |
-| Localization error vs. AprilTag ground truth, mean (cm) | 0.74 | 0.71 | 22.66 | 0.43 |
-| Mean moving velocity (m/s) | 0.252 | 0.207 | 0.313 | 0.274 |
+| Metric | IPS + IMU (production) | IPS Only | IMU Only |
+|---|---|---|---|
+| Run duration (s) | 20.3 | 39.3 | 25.7 |
+| Cross-track error, mean (cm) | 4.46 | 8.65 | 3.84 |
+| Cross-track error, p95 (cm) | 7.59 | 11.05 | 11.55 |
+| Localization error vs. AprilTag ground truth, mean (cm) | 0.74 | 0.71 | 22.66 |
+| Mean moving velocity (m/s) | 0.252 | 0.207 | 0.313 |
 
 <table>
 <tr>
@@ -503,8 +478,7 @@ configurations while holding the MPC controller and planner fixed.
 <td><img src="docs/images/run2_ips_only_trajectory.png" width="420"/><br/><sub>Run 2 — IPS only</sub></td>
 </tr>
 <tr>
-<td><img src="docs/images/run3_imu_only_trajectory.png" width="420"/><br/><sub>Run 3 — IMU only (dead-reckoning)</sub></td>
-<td><img src="docs/images/run4_sign_detection_trajectory.png" width="420"/><br/><sub>Run 4 — Sign-detection run</sub></td>
+<td colspan="2" align="center"><img src="docs/images/run3_imu_only_trajectory.png" width="420"/><br/><sub>Run 3 — IMU only (dead-reckoning)</sub></td>
 </tr>
 </table>
 
@@ -518,8 +492,6 @@ configurations while holding the MPC controller and planner fixed.
   drifting reference frame accurately while true position error grew to ~22–28 cm.
 - **IPS-only** (no IMU yaw) showed degraded heading accuracy during brief AprilTag dropouts,
   roughly doubling cross-track error relative to the production configuration.
-- The sign-detection run confirmed STOP/SLOW_DOWN/PARK velocity-override behavior, including
-  two 5-second STOP holds matching the MPC's designed dwell duration to within 20 ms.
 
 > Cross-track error is a controller-tracking metric measured against the EKF's own belief of
 > its position, not an absolute-accuracy metric; localization error against AprilTag ground
@@ -556,8 +528,6 @@ From the internship report's prioritized future-work list:
 - Integrate obstacle avoidance natively into the MPC cost function (linearized distance-field
   penalty) instead of the current post-QP EDT fallback.
 - Characterize and compensate the IMU's lever-arm mounting offset.
-- Expand the traffic-sign vocabulary and add per-sign velocity profiles.
-- Migrate the traffic-sign CV pipeline from CPU to GPU execution.
 
 ---
 
@@ -581,24 +551,16 @@ packages: [`vesc`](https://github.com/f1tenth/vesc) (BSD license) and `ydlidar_r
 
 ## Information Missing
 
-The following items could not be reliably inferred from the repository source or could not be
-fully reconciled between the repository and the internship report, and are flagged rather than
-guessed:
-
 - **No top-level README, LICENSE, `.gitignore`, CI config, or `rosdep` dependency list** exists
   in the repository; installation steps above are inferred from `package.xml` and `import`
   statements.
-- The **traffic-sign `inference_node`** (`bno_test_pkg`) is defined and installable but is
-  **not launched** by `program_bringup/launch/iitb_bot.xml`, even though `mpc_node.py`
-  subscribes to its output topic (`/sign_action_node/command`). Whether this is an intentional
-  manual-launch step or an incomplete launch file could not be determined from source.
 - The AprilTag detector node itself (publisher of `/apriltag/tag2/pose`) is **not present in
   this repository** — it is an external dependency assumed to be running separately.
 - Exact **ROS 2 distribution** (e.g. Humble vs. Iron) is not pinned anywhere in the repository;
   it is inferred from `package_format3.xsd` usage and general API style.
-- Precise Jetson model, VESC firmware version, camera model (OAK-D), and battery specifications
-  are taken from the internship report only and have no corresponding configuration/constant in
-  the source confirming them.
+- Precise Jetson model, VESC firmware version, and battery specifications are taken from the
+  internship report only and have no corresponding configuration/constant in the source
+  confirming them.
 - The `robot_maps/maps/iitb_maps/shrisha.jpeg` and `track_2.jpeg`/`track_3.png` files exist in
   the repository but their specific purpose (alternate track layouts vs. reference photos)
   could not be determined from surrounding code or comments.
